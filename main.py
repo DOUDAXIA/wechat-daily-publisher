@@ -1,6 +1,6 @@
 """微信公众号每日自动发文系统 - 主入口
 
-每天早上收集昨日全网热点 → AI写主文(回顾+前瞻)+毛选附文 → 配图 → 推送
+每日荐书(一日一书)+毛选附文 → 配图 → 推送
 """
 
 import json
@@ -9,7 +9,6 @@ import random
 import sys
 from datetime import datetime, timezone, timedelta
 
-from collectors import WeiboCollector, ZhihuCollector, BaiduCollector, ToutiaoCollector
 from writer import DeepSeekWriter
 from writer.prompts import (
     MAIN_ARTICLE_SYSTEM,
@@ -32,66 +31,30 @@ def load_config() -> dict:
         return json.load(f)
 
 
-def collect_hotspots() -> list:
-    """并行抓取四个平台热搜，合并去重，按分类均衡筛选"""
-    collectors = [
-        WeiboCollector(),
-        ZhihuCollector(),
-        BaiduCollector(),
-        ToutiaoCollector(),
-    ]
+def pick_category(data_dir: str) -> str:
+    """轮替选取今日荐书类别"""
+    path = os.path.join(data_dir, "book_categories.json")
+    with open(path, "r", encoding="utf-8") as f:
+        data = json.load(f)
 
-    all_items = []
-    for collector in collectors:
-        print(f"[收集] 正在抓取 {collector.name}...")
-        items = collector.fetch()
-        all_items.extend(items)
+    categories = data["categories"]
+    used = data.get("_used_indices", [])
 
-    seen_titles = set()
-    deduped = []
-    for item in all_items:
-        key = item["title"][:10]
-        if key not in seen_titles:
-            seen_titles.add(key)
-            deduped.append(item)
+    available = [i for i in range(len(categories)) if i not in used]
+    if not available:
+        print("[荐书] 所有类别已轮完一遍，重置")
+        data["_used_indices"] = []
+        available = list(range(len(categories)))
 
-    categories = {}
-    for item in deduped:
-        cat = item.get("category", "其他")
-        if cat not in categories:
-            categories[cat] = []
-        categories[cat].append(item)
+    idx = random.choice(available)
+    data["_used_indices"] = used + [idx]
 
-    target_categories = ["娱乐", "国际", "游戏", "运动", "科技", "社会", "财经"]
-    selected = []
-    for cat in target_categories:
-        if cat in categories:
-            items = sorted(
-                categories[cat],
-                key=lambda x: x.get("rank", 999) if isinstance(x.get("rank"), (int, float)) else 999,
-            )[:3]
-            selected.extend(items)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
 
-    for cat, items in categories.items():
-        if cat not in target_categories and len(selected) < 20:
-            selected.extend(items[:2])
-
-    print(f"[收集] 共获取 {len(deduped)} 条，筛选后 {len(selected)} 条")
-    print(f"[收集] 覆盖类别: {set(i.get('category') for i in selected)}")
-    return selected
-
-
-def format_hotspots_text(hotspots: list) -> str:
-    """将热点列表格式化为Prompt用的文本"""
-    lines = []
-    for item in hotspots:
-        cat = item.get("category", "其他")
-        title = item["title"]
-        source = item["source"]
-        heat = item.get("heat", "")
-        heat_str = f" | 热度:{heat}" if heat else ""
-        lines.append(f"- [{cat}] {title}（来源：{source}{heat_str}）")
-    return "\n".join(lines)
+    category = categories[idx]
+    print(f"[荐书] 今日类别: {category}（第{len(data['_used_indices'])}/10轮）")
+    return category
 
 
 def pick_mao_essay(essays_path: str) -> dict:
@@ -121,33 +84,26 @@ def pick_mao_essay(essays_path: str) -> dict:
 
 def main():
     beijing_tz = timezone(timedelta(hours=8))
-    now = datetime.now(beijing_tz)
-    yesterday = now - timedelta(days=1)
-    date_display = yesterday.strftime("%Y年%m月%d日")
+    today = datetime.now(beijing_tz).strftime("%Y年%m月%d日")
 
     print(f"\n{'='*50}")
-    print(f"  微信公众号每日发文系统 - 回顾{date_display}")
+    print(f"  微信公众号每日发文系统 - {today}")
     print(f"{'='*50}\n")
 
     config = load_config()
-
-    # ① 收集热点
-    print("【步骤1/5】收集全网热点...")
-    hotspots = collect_hotspots()
-    if not hotspots:
-        print("❌ 未获取到任何热点，程序终止")
-        sys.exit(1)
-
-    hotspots_text = format_hotspots_text(hotspots)
-    print(f"\n--- 热点预览 ---\n{hotspots_text[:500]}...\n")
-
-    # ② AI写作
-    print("【步骤2/5】DeepSeek AI 撰写主文...")
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    data_dir = os.path.join(script_dir, "mao_data")
     writer = DeepSeekWriter(config)
 
+    # ① 选取荐书类别
+    print("【步骤1/4】选取今日荐书类别...")
+    category = pick_category(data_dir)
+
+    # ② 写主文：每日荐书
+    print("【步骤2/4】DeepSeek AI 撰写荐书文章...")
     main_content = writer.chat(
         system_prompt=MAIN_ARTICLE_SYSTEM,
-        user_prompt=MAIN_ARTICLE_USER.format(hotspots_text=hotspots_text),
+        user_prompt=MAIN_ARTICLE_USER.format(category=category),
         temperature=0.85,
         max_tokens=4096,
     )
@@ -155,7 +111,7 @@ def main():
         print("❌ 主文生成失败")
         sys.exit(1)
 
-    main_title = f"{date_display} 热点杂谈"
+    main_title = f"一日一书"
     for line in main_content.split("\n"):
         stripped = line.strip()
         if stripped.startswith("# "):
@@ -165,10 +121,9 @@ def main():
     print(f"[主文] 标题: {main_title}")
     print(f"[主文] 长度: {len(main_content)} 字")
 
-    # ③ 毛选附文
-    print("\n【步骤3/5】撰写毛选附文...")
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    essays_path = os.path.join(script_dir, "mao_data", "essays.json")
+    # ③ 写附文：毛选见解
+    print("\n【步骤3/4】撰写毛选附文...")
+    essays_path = os.path.join(data_dir, "essays.json")
     mao_essay = pick_mao_essay(essays_path)
 
     mao_content = writer.chat(
@@ -195,8 +150,8 @@ def main():
     print(f"[附文] 标题: {mao_title}")
     print(f"[附文] 长度: {len(mao_content)} 字")
 
-    # ④ 配图 (Unsplash)
-    print("\n【步骤4/5】匹配插图...")
+    # ④ 配图 + 推送
+    print("\n【步骤4/4】配图并推送...")
     unsplash_key = config.get("unsplash", {}).get("api_key", "")
     if unsplash_key:
         fetcher = ImageFetcher(unsplash_key)
@@ -207,19 +162,17 @@ def main():
         main_images = []
         mao_images = []
 
-    # ⑤ 推送
-    print("\n【步骤5/5】推送文章...")
     main_article = {
         "title": main_title,
         "content": main_content,
         "images": main_images,
-        "date": date_display,
+        "date": today,
     }
     mao_article = {
         "title": mao_title,
         "content": mao_content,
         "images": mao_images,
-        "date": date_display,
+        "date": today,
         "source_essay": mao_essay["title"],
     }
 
@@ -227,7 +180,7 @@ def main():
     notifier.notify(main_article, mao_article)
 
     print(f"\n{'='*50}")
-    print(f"  ✅ 任务完成！主文+附文已推送")
+    print(f"  ✅ 任务完成！荐书+附文已推送")
     print(f"  主文：《{main_title}》")
     print(f"  附文：《{mao_title}》")
     print(f"{'='*50}\n")

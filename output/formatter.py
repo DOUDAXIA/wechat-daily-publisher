@@ -53,7 +53,7 @@ class OutputFormatter:
 
   <!-- 顶部 -->
   <div style="text-align:center;padding:32px 0 20px 0">
-    <div style="font-size:13px;color:#b0a89c;letter-spacing:2px;margin-bottom:8px">DAILY DIGEST</div>
+    <div style="font-size:13px;color:#b0a89c;letter-spacing:2px;margin-bottom:8px">DAILY BOOK</div>
     <h1 style="margin:0;font-size:24px;font-weight:700;color:#1a1a1a;line-height:1.4">{main_title}</h1>
     <div style="margin-top:10px;font-size:13px;color:#999">{date_str}</div>
   </div>
