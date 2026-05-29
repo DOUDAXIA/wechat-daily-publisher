@@ -1,0 +1,9 @@
+config.json
+__pycache__/
+*.pyc
+.env
+output/img_cache/
+微信公众号
+*.log
+deploy_key
+deploy_key.pub
