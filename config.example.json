@@ -8,7 +8,7 @@
     "smtp_host": "smtp.qq.com",
     "smtp_port": 587,
     "sender": "你的QQ号@qq.com",
-    "password": "QQ邮箱SMTP授权码(不是QQ密码)",
+    "password": "QQ邮箱SMTP授权码",
     "receiver": "接收文章的邮箱"
   },
   "wechat_notify": {
@@ -16,11 +16,11 @@
     "type": "pushplus",
     "token": "你的PushPlus-Token"
   },
-  "pexels": {
-    "api_key": "你的Pexels-API-Key"
+  "unsplash": {
+    "api_key": "你的Unsplash-Access-Key"
   },
   "schedule": {
     "cron": "0 1 * * *",
-    "comment": "UTC时间凌晨1点 = 北京时间早上9点"
+    "comment": "UTC 1:00 = 北京时间 9:00"
   }
 }

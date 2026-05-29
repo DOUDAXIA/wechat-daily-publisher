@@ -1,6 +1,6 @@
 """微信公众号每日自动发文系统 - 主入口
 
-每天早上收集全网热点 → AI写主文+毛选附文 → 配图 → 推送到邮箱+微信
+每天早上收集昨日全网热点 → AI写主文(回顾+前瞻)+毛选附文 → 配图 → 推送
 """
 
 import json
@@ -47,7 +47,6 @@ def collect_hotspots() -> list:
         items = collector.fetch()
         all_items.extend(items)
 
-    # 去重（按标题相似度）
     seen_titles = set()
     deduped = []
     for item in all_items:
@@ -56,7 +55,6 @@ def collect_hotspots() -> list:
             seen_titles.add(key)
             deduped.append(item)
 
-    # 按类别分组
     categories = {}
     for item in deduped:
         cat = item.get("category", "其他")
@@ -64,16 +62,16 @@ def collect_hotspots() -> list:
             categories[cat] = []
         categories[cat].append(item)
 
-    # 每类挑2-3条，确保全品类覆盖
     target_categories = ["娱乐", "国际", "游戏", "运动", "科技", "社会", "财经"]
     selected = []
     for cat in target_categories:
         if cat in categories:
-            items = sorted(categories[cat],
-                          key=lambda x: x.get("rank", 999) if isinstance(x.get("rank"), (int, float)) else 999)[:3]
+            items = sorted(
+                categories[cat],
+                key=lambda x: x.get("rank", 999) if isinstance(x.get("rank"), (int, float)) else 999,
+            )[:3]
             selected.extend(items)
 
-    # 补充一些其他类别里比较热的
     for cat, items in categories.items():
         if cat not in target_categories and len(selected) < 20:
             selected.extend(items[:2])
@@ -103,11 +101,8 @@ def pick_mao_essay(essays_path: str) -> dict:
 
     essays = data["essays"]
     used_ids = set(data.get("_used_ids", []))
-
-    # 过滤掉已用过的
     available = [e for e in essays if e["id"] not in used_ids]
 
-    # 如果全用完了，重置
     if not available:
         print("[毛选] 所有篇章已轮完一遍，重置列表")
         data["_used_ids"] = []
@@ -126,13 +121,14 @@ def pick_mao_essay(essays_path: str) -> dict:
 
 def main():
     beijing_tz = timezone(timedelta(hours=8))
-    today = datetime.now(beijing_tz).strftime("%Y年%m月%d日")
+    now = datetime.now(beijing_tz)
+    yesterday = now - timedelta(days=1)
+    date_display = yesterday.strftime("%Y年%m月%d日")
 
     print(f"\n{'='*50}")
-    print(f"  微信公众号每日发文系统 - {today}")
+    print(f"  微信公众号每日发文系统 - 回顾{date_display}")
     print(f"{'='*50}\n")
 
-    # 加载配置
     config = load_config()
 
     # ① 收集热点
@@ -143,7 +139,7 @@ def main():
         sys.exit(1)
 
     hotspots_text = format_hotspots_text(hotspots)
-    print(f"\n--- 今日热点预览 ---\n{hotspots_text[:500]}...\n")
+    print(f"\n--- 热点预览 ---\n{hotspots_text[:500]}...\n")
 
     # ② AI写作
     print("【步骤2/5】DeepSeek AI 撰写主文...")
@@ -159,8 +155,7 @@ def main():
         print("❌ 主文生成失败")
         sys.exit(1)
 
-    # 提取标题（第一行 # 开头）
-    main_title = today + "热点杂谈"
+    main_title = f"{date_display} 热点杂谈"
     for line in main_content.split("\n"):
         stripped = line.strip()
         if stripped.startswith("# "):
@@ -200,15 +195,15 @@ def main():
     print(f"[附文] 标题: {mao_title}")
     print(f"[附文] 长度: {len(mao_content)} 字")
 
-    # ④ 配图
+    # ④ 配图 (Unsplash)
     print("\n【步骤4/5】匹配插图...")
-    pexels_key = config.get("pexels", {}).get("api_key", "")
-    if pexels_key:
-        fetcher = ImageFetcher(pexels_key)
+    unsplash_key = config.get("unsplash", {}).get("api_key", "")
+    if unsplash_key:
+        fetcher = ImageFetcher(unsplash_key)
         main_images = fetcher.fetch_for_article(main_content, count=5)
         mao_images = fetcher.fetch_for_article(mao_content, count=3)
     else:
-        print("[图片] 未配置Pexels API Key，跳过配图")
+        print("[图片] 未配置 Unsplash API Key，跳过配图")
         main_images = []
         mao_images = []
 
@@ -218,13 +213,13 @@ def main():
         "title": main_title,
         "content": main_content,
         "images": main_images,
-        "date": today,
+        "date": date_display,
     }
     mao_article = {
         "title": mao_title,
         "content": mao_content,
         "images": mao_images,
-        "date": today,
+        "date": date_display,
         "source_essay": mao_essay["title"],
     }
 
@@ -232,7 +227,7 @@ def main():
     notifier.notify(main_article, mao_article)
 
     print(f"\n{'='*50}")
-    print(f"  ✅ 今日任务完成！主文+附文已推送")
+    print(f"  ✅ 任务完成！主文+附文已推送")
     print(f"  主文：《{main_title}》")
     print(f"  附文：《{mao_title}》")
     print(f"{'='*50}\n")
