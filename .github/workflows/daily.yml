@@ -1,11 +1,9 @@
-name: 每日公众号文章生成
+name: Daily Article Generator
 
 on:
   schedule:
-    # UTC 1:00 = 北京时间 9:00
     - cron: "0 1 * * *"
   workflow_dispatch:
-    # 允许手动触发
 
 jobs:
   generate:
@@ -13,21 +11,21 @@ jobs:
     timeout-minutes: 15
 
     steps:
-      - name: 检出代码
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: 安装 Python
+      - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      - name: 安装依赖
+      - name: Install Dependencies
         run: pip install -r requirements.txt
 
-      - name: 写入配置文件
+      - name: Write Config
         env:
           CONFIG_JSON: ${{ secrets.CONFIG_JSON }}
         run: echo "$CONFIG_JSON" > config.json
 
-      - name: 运行主程序
+      - name: Run Main Script
         run: python main.py
