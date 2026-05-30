@@ -32,7 +32,7 @@ MAIN_ARTICLE_SYSTEM = """你是一位职业书评人，你的专栏叫《一日�
 
 MAIN_ARTICLE_USER = """请推荐一本好书，写一篇《一日一书》专栏文章。
 
-今日推荐类别：{category}
+今日推荐类别：{category}{event_context}
 
 要求：
 - 从这个类别中选一本你了解、确实值得推荐的书
