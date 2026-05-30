@@ -31,8 +31,28 @@ def load_config() -> dict:
         return json.load(f)
 
 
-def pick_category(data_dir: str) -> str:
-    """轮替选取今日荐书类别"""
+def check_today_event(data_dir: str, today: datetime) -> dict | None:
+    """检查今天是否有特殊节日或事件"""
+    path = os.path.join(data_dir, "events_calendar.json")
+    with open(path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+
+    today_mmdd = today.strftime("%m-%d")
+    for event in data.get("events", []):
+        if event["date"] == today_mmdd:
+            print(f"[事件] 今天是{event['name']}！主题：{event['theme']}")
+            return event
+    return None
+
+
+def pick_category(data_dir: str, event: dict | None = None) -> tuple:
+    """选取今日荐书类别。如有特殊事件则联动推荐，返回 (类别, 事件提示)"""
+    if event:
+        category = event.get("suggest_category", "文学小说")
+        hint = event.get("hint", "")
+        print(f"[荐书] 联动事件「{event['name']}」-> 类别: {category}")
+        return category, hint
+
     path = os.path.join(data_dir, "book_categories.json")
     with open(path, "r", encoding="utf-8") as f:
         data = json.load(f)
@@ -54,7 +74,7 @@ def pick_category(data_dir: str) -> str:
 
     category = categories[idx]
     print(f"[荐书] 今日类别: {category}（第{len(data['_used_indices'])}/10轮）")
-    return category
+    return category, ""
 
 
 def pick_mao_essay(essays_path: str) -> dict:
@@ -95,15 +115,25 @@ def main():
     data_dir = os.path.join(script_dir, "mao_data")
     writer = DeepSeekWriter(config)
 
-    # ① 选取荐书类别
-    print("【步骤1/4】选取今日荐书类别...")
-    category = pick_category(data_dir)
+    # ① 检测特殊日期 + 选取荐书类别
+    print("【步骤1/4】检测特殊日期并选取荐书类别...")
+    now = datetime.now(beijing_tz)
+    event = check_today_event(data_dir, now)
+    category, event_hint = pick_category(data_dir, event)
+
+    if event:
+        user_prompt = MAIN_ARTICLE_USER.format(
+            category=category,
+            event_context=f"\n今日是{event['name']}，主题：{event['theme']}。{event_hint}\n请务必让推荐的书与这个节日或事件有一定关联。",
+        )
+    else:
+        user_prompt = MAIN_ARTICLE_USER.format(category=category, event_context="")
 
     # ② 写主文：每日荐书
     print("【步骤2/4】DeepSeek AI 撰写荐书文章...")
     main_content = writer.chat(
         system_prompt=MAIN_ARTICLE_SYSTEM,
-        user_prompt=MAIN_ARTICLE_USER.format(category=category),
+        user_prompt=user_prompt,
         temperature=0.85,
         max_tokens=4096,
     )
