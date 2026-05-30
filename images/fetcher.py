@@ -1,4 +1,4 @@
-"""Unsplash 图库搜图下载 - 现代艺术风格"""
+"""图片搜索下载 - 支持 Unsplash / Pexels 双图源"""
 
 import os
 import re
@@ -9,15 +9,16 @@ import requests
 
 
 class ImageFetcher:
-    base_url = "https://api.unsplash.com"
-
-    def __init__(self, api_key: str):
+    def __init__(self, api_key: str, source: str = "unsplash"):
         self.api_key = api_key
-        self.cache_dir = os.path.join(os.path.dirname(__file__), "..", "output", "img_cache")
+        self.source = source
+        self.cache_dir = os.path.join(
+            os.path.dirname(__file__), "..", "output", "img_cache"
+        )
         os.makedirs(self.cache_dir, exist_ok=True)
 
     def extract_keywords(self, text: str, count: int = 6) -> List[str]:
-        """从文章中提取搜索关键词，优先提取具体可视觉化的词"""
+        """从文章中提取搜索关键词"""
         chinese_words = re.findall(r"[一-鿿]{2,4}", text)
         stop_words = {
             "一个", "这个", "可以", "他们", "我们", "自己", "什么", "没有",
@@ -39,56 +40,37 @@ class ImageFetcher:
             if len(keywords) >= count:
                 break
 
-        # 补充一些视觉感强的英文关键词
         visual_keywords = {
-            "游戏": "gaming",
-            "运动": "sports",
-            "足球": "football",
-            "篮球": "basketball",
-            "娱乐": "entertainment",
-            "电影": "cinema",
-            "科技": "technology",
-            "AI": "artificial intelligence",
-            "国际": "world news",
-            "社会": "city life",
-            "经济": "business",
-            "环境": "nature",
-            "天气": "weather",
-            "手机": "smartphone",
-            "航天": "space",
-            "海洋": "ocean",
-            "城市": "city",
-            "自然": "nature landscape",
+            "游戏": "gaming", "运动": "sports", "足球": "football",
+            "篮球": "basketball", "娱乐": "entertainment", "电影": "cinema",
+            "科技": "technology", "国际": "world", "社会": "city life",
+            "经济": "business", "环境": "nature", "城市": "city",
+            "航天": "space", "海洋": "ocean", "自然": "nature landscape",
+            "手机": "smartphone", "阅读": "reading book",
+            "春节": "chinese new year", "节日": "festival celebration",
         }
         for cn, en in visual_keywords.items():
             if cn in text and en not in keywords:
                 keywords.append(en)
 
-        return keywords if keywords else ["news", "city", "nature"]
+        return keywords if keywords else ["book", "reading", "knowledge"]
 
-    def search(self, keyword: str, per_page: int = 3) -> List[dict]:
-        """搜索 Unsplash 图片"""
-        headers = {
-            "Authorization": f"Client-ID {self.api_key}",
-            "Accept-Version": "v1",
-        }
+    def _search_unsplash(self, keyword: str, per_page: int = 3) -> List[dict]:
+        """Unsplash 搜索"""
+        headers = {"Authorization": f"Client-ID {self.api_key}"}
         params = {
-            "query": keyword,
-            "per_page": per_page,
-            "orientation": "landscape",
-            "order_by": "relevant",
+            "query": keyword, "per_page": per_page,
+            "orientation": "landscape", "order_by": "relevant",
         }
         try:
             resp = requests.get(
-                f"{self.base_url}/search/photos",
-                headers=headers,
-                params=params,
-                timeout=15,
+                "https://api.unsplash.com/search/photos",
+                headers=headers, params=params, timeout=15,
             )
             resp.raise_for_status()
             data = resp.json()
         except Exception as e:
-            print(f"[Unsplash] 搜索 '{keyword}' 失败: {e}")
+            print(f"[Unsplash] 搜索失败: {e}")
             return []
 
         results = []
@@ -101,7 +83,37 @@ class ImageFetcher:
                 "photographer": user.get("name", ""),
                 "photographer_url": f"https://unsplash.com/@{user.get('username', '')}",
                 "alt": photo.get("alt_description", keyword),
-                "color": photo.get("color", "#333333"),
+                "color": photo.get("color", "#333"),
+            })
+        return results
+
+    def _search_pexels(self, keyword: str, per_page: int = 3) -> List[dict]:
+        """Pexels 搜索（备用图源）"""
+        headers = {"Authorization": self.api_key}
+        params = {
+            "query": keyword, "per_page": per_page,
+            "orientation": "landscape", "locale": "zh-CN",
+        }
+        try:
+            resp = requests.get(
+                "https://api.pexels.com/v1/search",
+                headers=headers, params=params, timeout=15,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+        except Exception as e:
+            print(f"[Pexels] 搜索失败: {e}")
+            return []
+
+        results = []
+        for photo in data.get("photos", []):
+            results.append({
+                "url": photo["src"]["large"],
+                "small_url": photo["src"]["medium"],
+                "photographer": photo["photographer"],
+                "photographer_url": photo["photographer_url"],
+                "alt": photo.get("alt", keyword),
+                "color": photo.get("avg_color", "#333"),
             })
         return results
 
@@ -121,13 +133,15 @@ class ImageFetcher:
             return ""
 
     def fetch_for_article(self, text: str, count: int = 5) -> List[dict]:
-        """为文章匹配现代风格图片"""
+        """为文章匹配图片"""
         keywords = self.extract_keywords(text, count=8)
         all_images = []
         seen_urls = set()
 
+        search_fn = self._search_unsplash if self.source == "unsplash" else self._search_pexels
+
         for kw in keywords[:6]:
-            photos = self.search(kw, per_page=2)
+            photos = search_fn(kw, per_page=2)
             for photo in photos:
                 url = photo["url"]
                 if url in seen_urls:
@@ -153,5 +167,6 @@ class ImageFetcher:
             if len(all_images) >= count:
                 break
 
-        print(f"[Unsplash] 为文章匹配了 {len(all_images)} 张图片")
+        tag = "[Unsplash]" if self.source == "unsplash" else "[Pexels]"
+        print(f"{tag} 为文章匹配了 {len(all_images)} 张图片")
         return all_images

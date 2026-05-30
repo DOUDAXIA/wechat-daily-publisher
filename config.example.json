@@ -19,6 +19,11 @@
   "unsplash": {
     "api_key": "你的Unsplash-Access-Key"
   },
+  "pexels": {
+    "api_key": "你的Pexels-API-Key（可选，Unsplash失败时备用）"
+  },
+  "style": "sharp",
+  "_style_comment": "文风：sharp=犀利幽默, warm=温暖亲切, concise=简洁明快",
   "schedule": {
     "cron": "0 1 * * *",
     "comment": "UTC 1:00 = 北京时间 9:00"

@@ -71,7 +71,7 @@ class Notifier:
 
         try:
             resp = requests.post(
-                "http://www.pushplus.plus/send",
+                "https://www.pushplus.plus/send",
                 json={
                     "token": token,
                     "title": title,

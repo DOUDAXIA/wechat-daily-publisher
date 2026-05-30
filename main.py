@@ -1,11 +1,12 @@
 """微信公众号每日自动发文系统 - 主入口
 
-每日荐书(一日一书)+毛选附文 → 配图 → 推送
+每日荐书(一日一书)+毛选附文 → 配图 → 双通道推送
 """
 
 import json
 import os
 import random
+import re
 import sys
 from datetime import datetime, timezone, timedelta
 
@@ -32,14 +33,17 @@ def load_config() -> dict:
 
 
 def check_today_event(data_dir: str, today: datetime) -> dict | None:
-    """检查今天是否有特殊节日或事件"""
+    """检查今天是否有特殊节日或事件，支持 MM-DD 和 YYYY-MM-DD 两种格式"""
     path = os.path.join(data_dir, "events_calendar.json")
     with open(path, "r", encoding="utf-8") as f:
         data = json.load(f)
 
     today_mmdd = today.strftime("%m-%d")
+    today_full = today.strftime("%Y-%m-%d")
+
     for event in data.get("events", []):
-        if event["date"] == today_mmdd:
+        event_date = event["date"]
+        if event_date == today_mmdd or event_date == today_full:
             print(f"[事件] 今天是{event['name']}！主题：{event['theme']}")
             return event
     return None
@@ -102,35 +106,98 @@ def pick_mao_essay(essays_path: str) -> dict:
     return chosen
 
 
+def load_book_history(data_dir: str) -> list:
+    """加载已推荐书籍列表"""
+    path = os.path.join(data_dir, "book_history.json")
+    if not os.path.exists(path):
+        return []
+    with open(path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    return data.get("books", [])
+
+
+def save_book_history(data_dir: str, title: str):
+    """保存已推荐的书名，保留最近50条"""
+    path = os.path.join(data_dir, "book_history.json")
+    books = load_book_history(data_dir)
+    books.append({"title": title, "date": datetime.now(timezone(timedelta(hours=8))).strftime("%Y-%m-%d")})
+    if len(books) > 50:
+        books = books[-50:]
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump({"books": books}, f, ensure_ascii=False, indent=2)
+
+
+def extract_book_title(content: str) -> str:
+    """从文章内容尝试提取书名"""
+    # 匹配《书名》格式
+    matches = re.findall(r"《(.+?)》", content)
+    if matches:
+        # 取第一个，优先选择包含「一日一书」标题行中的
+        for m in matches:
+            if "一日一书" not in m and len(m) > 1:
+                return m
+        return matches[0]
+    return ""
+
+
+def save_history_file(history_dir: str, filename: str, content: str):
+    """保存文章到历史存档目录"""
+    os.makedirs(history_dir, exist_ok=True)
+    path = os.path.join(history_dir, filename)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(content)
+
+
 def main():
     beijing_tz = timezone(timedelta(hours=8))
-    today = datetime.now(beijing_tz).strftime("%Y年%m月%d日")
+    now = datetime.now(beijing_tz)
+    today_str = now.strftime("%Y年%m月%d日")
+    today_file = now.strftime("%Y%m%d")
 
     print(f"\n{'='*50}")
-    print(f"  微信公众号每日发文系统 - {today}")
+    print(f"  微信公众号每日发文系统 - {today_str}")
     print(f"{'='*50}\n")
 
     config = load_config()
     script_dir = os.path.dirname(os.path.abspath(__file__))
     data_dir = os.path.join(script_dir, "mao_data")
+    history_dir = os.path.join(script_dir, "history")
     writer = DeepSeekWriter(config)
 
     # ① 检测特殊日期 + 选取荐书类别
     print("【步骤1/4】检测特殊日期并选取荐书类别...")
-    now = datetime.now(beijing_tz)
     event = check_today_event(data_dir, now)
     category, event_hint = pick_category(data_dir, event)
 
-    if event:
-        user_prompt = MAIN_ARTICLE_USER.format(
-            category=category,
-            event_context=f"\n今日是{event['name']}，主题：{event['theme']}。{event_hint}\n请务必让推荐的书与这个节日或事件有一定关联。",
-        )
-    else:
-        user_prompt = MAIN_ARTICLE_USER.format(category=category, event_context="")
+    # 构建推荐历史文本以辅助去重
+    recent_books = load_book_history(data_dir)
+    history_text = ""
+    if recent_books:
+        recent_titles = [b["title"] for b in recent_books[-10:]]
+        history_text = f"\n⚠️ 以下书籍近期已推荐过，请务必避免重复：{', '.join(recent_titles)}"
 
     # ② 写主文：每日荐书
     print("【步骤2/4】DeepSeek AI 撰写荐书文章...")
+    style = config.get("style", "sharp")  # sharp / warm / concise
+    style_map = {
+        "sharp": "保持你一贯犀利而不失幽默的评论风格",
+        "warm": "今天的语调温和一些，像一个贴心的朋友在聊天，少讽刺多鼓励",
+        "concise": "今天简洁一些，控制在800字以内，每段不超过三行",
+    }
+    style_hint = style_map.get(style, style_map["sharp"])
+
+    if event:
+        event_context = f"\n今日是{event['name']}，主题：{event['theme']}。{event_hint}\n请务必让推荐的书与这个节日或事件有一定关联。"
+    else:
+        event_context = ""
+
+    user_prompt = MAIN_ARTICLE_USER.format(
+        category=category,
+        event_context=event_context,
+        style_hint=style_hint,
+        history_text=history_text,
+    )
+
     main_content = writer.chat(
         system_prompt=MAIN_ARTICLE_SYSTEM,
         user_prompt=user_prompt,
@@ -141,7 +208,7 @@ def main():
         print("❌ 主文生成失败")
         sys.exit(1)
 
-    main_title = f"一日一书"
+    main_title = "一日一书"
     for line in main_content.split("\n"):
         stripped = line.strip()
         if stripped.startswith("# "):
@@ -150,6 +217,12 @@ def main():
 
     print(f"[主文] 标题: {main_title}")
     print(f"[主文] 长度: {len(main_content)} 字")
+
+    # 记录推荐的书名
+    book_title = extract_book_title(main_content)
+    if book_title:
+        save_book_history(data_dir, book_title)
+        print(f"[记录] 已记录推荐书籍: 《{book_title}》")
 
     # ③ 写附文：毛选见解
     print("\n【步骤3/4】撰写毛选附文...")
@@ -180,39 +253,62 @@ def main():
     print(f"[附文] 标题: {mao_title}")
     print(f"[附文] 长度: {len(mao_content)} 字")
 
-    # ④ 配图 + 推送
+    # ④ 配图
     print("\n【步骤4/4】配图并推送...")
     unsplash_key = config.get("unsplash", {}).get("api_key", "")
+    pexels_key = config.get("pexels", {}).get("api_key", "")
+
+    main_images = []
+    mao_images = []
+
     if unsplash_key:
         fetcher = ImageFetcher(unsplash_key)
         main_images = fetcher.fetch_for_article(main_content, count=5)
         mao_images = fetcher.fetch_for_article(mao_content, count=3)
-    else:
-        print("[图片] 未配置 Unsplash API Key，跳过配图")
-        main_images = []
-        mao_images = []
 
+    # 备用图源：Unsplash 没拿到图就用 Pexels
+    if (not main_images or not mao_images) and pexels_key:
+        print("[图片] Unsplash 图片不足，启用 Pexels 备用图源...")
+        pexels_images_dir = data_dir  # dummy, we create a new fetcher
+        pexels_fetcher = ImageFetcher(pexels_key, source="pexels")
+        if not main_images:
+            main_images = pexels_fetcher.fetch_for_article(main_content, count=5)
+        if not mao_images:
+            mao_images = pexels_fetcher.fetch_for_article(mao_content, count=3)
+
+    if not unsplash_key and not pexels_key:
+        print("[图片] 未配置任何图源 API Key，跳过配图")
+
+    # ⑤ 推送
     main_article = {
         "title": main_title,
         "content": main_content,
         "images": main_images,
-        "date": today,
+        "date": today_str,
     }
     mao_article = {
         "title": mao_title,
         "content": mao_content,
         "images": mao_images,
-        "date": today,
+        "date": today_str,
         "source_essay": mao_essay["title"],
     }
 
     notifier = Notifier(config)
     notifier.notify(main_article, mao_article)
 
+    # ⑥ 保存历史存档
+    full_text = f"# {main_title}\n\n{main_content}\n\n---\n\n# {mao_title}\n\n{mao_content}"
+    save_history_file(history_dir, f"{today_file}_主文.md", main_content)
+    save_history_file(history_dir, f"{today_file}_附文.md", mao_content)
+    save_history_file(history_dir, f"{today_file}_全文.md", full_text)
+    print(f"[存档] 已保存至 {history_dir}/")
+
     print(f"\n{'='*50}")
     print(f"  ✅ 任务完成！荐书+附文已推送")
     print(f"  主文：《{main_title}》")
     print(f"  附文：《{mao_title}》")
+    print(f"  文风：{style}")
     print(f"{'='*50}\n")
 
 
