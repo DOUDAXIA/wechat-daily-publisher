@@ -148,6 +148,19 @@ def save_history_file(history_dir: str, filename: str, content: str):
         f.write(content)
 
 
+def check_already_sent(history_dir: str, today_file: str) -> bool:
+    """检查今天是否已发送过，避免重复"""
+    sent_flag = os.path.join(history_dir, f"{today_file}_sent.txt")
+    return os.path.exists(sent_flag)
+
+
+def mark_sent(history_dir: str, today_file: str):
+    """标记今天已发送"""
+    sent_flag = os.path.join(history_dir, f"{today_file}_sent.txt")
+    with open(sent_flag, "w") as f:
+        f.write("done")
+
+
 def main():
     beijing_tz = timezone(timedelta(hours=8))
     now = datetime.now(beijing_tz)
@@ -156,12 +169,18 @@ def main():
 
     print(f"\n{'='*50}")
     print(f"  微信公众号每日发文系统 - {today_str}")
+    print(f"  北京时间: {now.strftime('%H:%M')}")
     print(f"{'='*50}\n")
 
     config = load_config()
     script_dir = os.path.dirname(os.path.abspath(__file__))
     data_dir = os.path.join(script_dir, "mao_data")
     history_dir = os.path.join(script_dir, "history")
+
+    # 防重复：今天已经发过了就跳过
+    if check_already_sent(history_dir, today_file):
+        print(f"[跳过] 今天({today_str})已经发送过了，不再重复执行")
+        sys.exit(0)
     writer = DeepSeekWriter(config)
 
     # ① 检测特殊日期 + 选取荐书类别
@@ -303,6 +322,8 @@ def main():
     save_history_file(history_dir, f"{today_file}_附文.md", mao_content)
     save_history_file(history_dir, f"{today_file}_全文.md", full_text)
     print(f"[存档] 已保存至 {history_dir}/")
+
+    mark_sent(history_dir, today_file)
 
     print(f"\n{'='*50}")
     print(f"  ✅ 任务完成！荐书+附文已推送")
