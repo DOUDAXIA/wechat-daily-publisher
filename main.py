@@ -167,9 +167,12 @@ def main():
     today_str = now.strftime("%Y年%m月%d日")
     today_file = now.strftime("%Y%m%d")
 
+    current_hour = now.hour
+    current_minute = now.minute
+
     print(f"\n{'='*50}")
     print(f"  微信公众号每日发文系统 - {today_str}")
-    print(f"  北京时间: {now.strftime('%H:%M')}")
+    print(f"  北京时间: {current_hour:02d}:{current_minute:02d}")
     print(f"{'='*50}\n")
 
     config = load_config()
@@ -179,7 +182,15 @@ def main():
 
     # 防重复：今天已经发过了就跳过
     if check_already_sent(history_dir, today_file):
-        print(f"[跳过] 今天({today_str})已经发送过了，不再重复执行")
+        print(f"[跳过] 今天({today_str})已经发送过了")
+        sys.exit(0)
+
+    # 时间窗口：只在9:00-9:15之间发送（手动触发不限时间）
+    in_window = (current_hour == 9 and current_minute <= 15)
+    event_name = os.environ.get("GITHUB_EVENT_NAME", "")
+    is_manual = event_name in ("workflow_dispatch", "repository_dispatch")
+    if not in_window and not is_manual:
+        print(f"[跳过] 当前时间 {current_hour:02d}:{current_minute:02d}，不在发送窗口(9:00-9:15)")
         sys.exit(0)
     writer = DeepSeekWriter(config)
 

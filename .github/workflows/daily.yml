@@ -2,9 +2,11 @@ name: Daily Article Generator
 
 on:
   schedule:
-    - cron: "0 1 * * *"
-    - cron: "0 2 * * *"
+    - cron: "0 * * * *"
+    - cron: "30 * * * *"
   workflow_dispatch:
+  repository_dispatch:
+    types: [daily-publish]
 
 jobs:
   generate:
@@ -29,7 +31,9 @@ jobs:
         run: echo "$CONFIG_JSON" > config.json
 
       - name: Run Main Script
+        id: run
         run: python main.py
+        continue-on-error: true
 
       - name: Upload History Artifact
         if: always()
@@ -47,4 +51,3 @@ jobs:
           curl -k -s -X POST https://www.pushplus.plus/send \
             -H "Content-Type: application/json" \
             -d "{\"token\":\"$TOKEN\",\"title\":\"❌ 公众号文章生成失败\",\"content\":\"今日文章生成失败，请前往 GitHub Actions 查看日志：${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}"
-          echo "[通知] 已推送失败提醒到微信"
