@@ -185,13 +185,23 @@ def main():
         print(f"[跳过] 今天({today_str})已经发送过了")
         sys.exit(0)
 
-    # 时间窗口：只在9:00-9:15之间发送（手动触发不限时间）
-    in_window = (current_hour == 9 and current_minute <= 15)
+    # 时间窗口逻辑：
+    # - 9:00-9:15：准时发送
+    # - 9:15之后且今天未发：迟到补发
+    # - 手动触发：不限时间
     event_name = os.environ.get("GITHUB_EVENT_NAME", "")
     is_manual = event_name in ("workflow_dispatch", "repository_dispatch")
-    if not in_window and not is_manual:
-        print(f"[跳过] 当前时间 {current_hour:02d}:{current_minute:02d}，不在发送窗口(9:00-9:15)")
+    is_ontime = (current_hour == 9 and current_minute <= 15)
+    is_late = (current_hour >= 9 and current_minute > 15) or current_hour > 9
+    late_notice = ""
+
+    if not is_ontime and not is_late and not is_manual:
+        print(f"[跳过] 当前时间 {current_hour:02d}:{current_minute:02d}，未到发送时间")
         sys.exit(0)
+
+    if is_late and not is_manual:
+        late_notice = "\n（注：GitHub Actions 调度延迟，今日发送时间推迟，见谅）"
+        print(f"[补发] 已过9:15，执行迟到补发")
     writer = DeepSeekWriter(config)
 
     # ① 检测特殊日期 + 选取荐书类别
@@ -312,7 +322,7 @@ def main():
     # ⑤ 推送
     main_article = {
         "title": main_title,
-        "content": main_content,
+        "content": main_content + late_notice,
         "images": main_images,
         "date": today_str,
     }
