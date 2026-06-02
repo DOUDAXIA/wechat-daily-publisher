@@ -35,6 +35,18 @@ jobs:
         run: python main.py
         continue-on-error: true
 
+      - name: Commit Dedup Marker
+        if: always()
+        run: |
+          git config user.name "DailyPublisher"
+          git config user.email "daily@publisher"
+          TODAY=$(date -u +%Y%m%d)
+          if [ -f "mao_data/${TODAY}_sent.txt" ]; then
+            git add "mao_data/${TODAY}_sent.txt"
+            git commit -m "标记今日已发送: ${TODAY}" || echo "nothing to commit"
+            git push || echo "push failed"
+          fi
+
       - name: Upload History Artifact
         if: always()
         uses: actions/upload-artifact@v4
@@ -43,7 +55,7 @@ jobs:
           path: history/
 
       - name: Failure Notification
-        if: failure()
+        if: steps.run.outcome == 'failure'
         env:
           CONFIG_JSON: ${{ secrets.CONFIG_JSON }}
         run: |
