@@ -242,7 +242,7 @@ def main():
         system_prompt=MAIN_ARTICLE_SYSTEM,
         user_prompt=user_prompt,
         temperature=0.85,
-        max_tokens=4096,
+        max_tokens=16384,
     )
     if not main_content:
         print("❌ 主文生成失败")
@@ -277,7 +277,7 @@ def main():
             theme=mao_essay["theme"],
         ),
         temperature=0.8,
-        max_tokens=3072,
+        max_tokens=8192,
     )
     if not mao_content:
         print("❌ 附文生成失败")
