@@ -8,6 +8,9 @@ on:
   repository_dispatch:
     types: [daily-publish]
 
+permissions:
+  contents: write
+
 jobs:
   generate:
     runs-on: ubuntu-latest
