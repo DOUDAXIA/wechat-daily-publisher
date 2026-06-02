@@ -148,15 +148,15 @@ def save_history_file(history_dir: str, filename: str, content: str):
         f.write(content)
 
 
-def check_already_sent(history_dir: str, today_file: str) -> bool:
-    """检查今天是否已发送过，避免重复"""
-    sent_flag = os.path.join(history_dir, f"{today_file}_sent.txt")
+def check_already_sent(data_dir: str, today_file: str) -> bool:
+    """检查今天是否已发送过（通过GitHub API写入标记文件，持久化到仓库）"""
+    sent_flag = os.path.join(data_dir, f"{today_file}_sent.txt")
     return os.path.exists(sent_flag)
 
 
-def mark_sent(history_dir: str, today_file: str):
-    """标记今天已发送"""
-    sent_flag = os.path.join(history_dir, f"{today_file}_sent.txt")
+def mark_sent(data_dir: str, today_file: str):
+    """标记今天已发送（持久化到仓库，下次运行可检测）"""
+    sent_flag = os.path.join(data_dir, f"{today_file}_sent.txt")
     with open(sent_flag, "w") as f:
         f.write("done")
 
@@ -180,8 +180,8 @@ def main():
     data_dir = os.path.join(script_dir, "mao_data")
     history_dir = os.path.join(script_dir, "history")
 
-    # 防重复：今天已经发过了就跳过
-    if check_already_sent(history_dir, today_file):
+    # 防重复：今天已经发过了就跳过（标记文件在 mao_data/ 目录，会持久化到仓库）
+    if check_already_sent(data_dir, today_file):
         print(f"[跳过] 今天({today_str})已经发送过了")
         sys.exit(0)
 
@@ -344,7 +344,7 @@ def main():
     save_history_file(history_dir, f"{today_file}_全文.md", full_text)
     print(f"[存档] 已保存至 {history_dir}/")
 
-    mark_sent(history_dir, today_file)
+    mark_sent(data_dir, today_file)
 
     print(f"\n{'='*50}")
     print(f"  ✅ 任务完成！荐书+附文已推送")
