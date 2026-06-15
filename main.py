@@ -16,6 +16,10 @@ from writer.prompts import (
     MAIN_ARTICLE_USER,
     MAO_ESSAY_SYSTEM,
     MAO_ESSAY_USER,
+    PHILOSOPHY_SYSTEM,
+    PHILOSOPHY_USER,
+    COLUMN_SYSTEM,
+    COLUMN_USER,
 )
 from images import ImageFetcher
 from output import Notifier
@@ -81,8 +85,8 @@ def pick_category(data_dir: str, event: dict | None = None) -> tuple:
     return category, ""
 
 
-def pick_mao_essay(essays_path: str) -> dict:
-    """随机选取一篇未用过的毛选篇章"""
+def pick_mao_essay(essays_path: str) -> dict | None:
+    """选取下一篇未用过的毛选篇章。全部用完返回 None"""
     with open(essays_path, "r", encoding="utf-8") as f:
         data = json.load(f)
 
@@ -91,10 +95,8 @@ def pick_mao_essay(essays_path: str) -> dict:
     available = [e for e in essays if e["id"] not in used_ids]
 
     if not available:
-        print("[毛选] 所有篇章已轮完一遍，重置列表")
-        data["_used_ids"] = []
-        used_ids = set()
-        available = essays
+        print("[毛选] 全部25篇已发完，切换到哲学模式")
+        return None
 
     chosen = random.choice(available)
     data["_used_ids"] = list(used_ids) + [chosen["id"]]
@@ -102,8 +104,37 @@ def pick_mao_essay(essays_path: str) -> dict:
     with open(essays_path, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
-    print(f"[毛选] 选中: {chosen['title']}（第{data['_used_ids'].index(chosen['id']) + 1}/25篇）")
+    print(f"[毛选] 选中: {chosen['title']}（第{len(data['_used_ids'])}/25篇）")
     return chosen
+
+
+def pick_philosophy(data_dir: str) -> dict | None:
+    """选取一个未讲过的哲学概念"""
+    path = os.path.join(data_dir, "philosophy.json")
+    if not os.path.exists(path):
+        return None
+
+    with open(path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+
+    concepts = data["concepts"]
+    used = set(data.get("_used_indices", []))
+    available = [i for i in range(len(concepts)) if i not in used]
+
+    if not available:
+        print("[哲学] 全部概念已讲完，重置")
+        data["_used_indices"] = []
+        available = list(range(len(concepts)))
+
+    idx = random.choice(available)
+    data["_used_indices"] = data.get("_used_indices", []) + [idx]
+
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+    concept = concepts[idx]
+    print(f"[哲学] 今日概念: {concept['name']}（{concept['origin']}）")
+    return concept
 
 
 def load_book_history(data_dir: str) -> list:
@@ -264,34 +295,90 @@ def main():
         save_book_history(data_dir, book_title)
         print(f"[记录] 已记录推荐书籍: 《{book_title}》")
 
-    # ③ 写附文：毛选见解
-    print("\n【步骤3/4】撰写毛选附文...")
+    # ③ 写附文：毛选 / 哲学 / 热点分析 三种轮替
+    print("\n【步骤3/4】撰写附文...")
     essays_path = os.path.join(data_dir, "essays.json")
-    mao_essay = pick_mao_essay(essays_path)
 
-    mao_content = writer.chat(
-        system_prompt=MAO_ESSAY_SYSTEM,
-        user_prompt=MAO_ESSAY_USER.format(
-            title=mao_essay["title"],
-            volume=mao_essay["volume"],
-            theme=mao_essay["theme"],
-        ),
-        temperature=0.8,
-        max_tokens=8192,
-    )
-    if not mao_content:
+    # 读取轮替状态
+    cycle_path = os.path.join(data_dir, "sub_cycle.json")
+    if os.path.exists(cycle_path):
+        with open(cycle_path, "r", encoding="utf-8") as f:
+            cycle_data = json.load(f)
+    else:
+        cycle_data = {"last": "热点"}
+
+    # 轮替顺序：毛选 → 哲学 → 热点 → 毛选 ...
+    rotation = ["毛选", "哲学", "热点"]
+    last = cycle_data.get("last", "热点")
+    next_idx = (rotation.index(last) + 1) % 3 if last in rotation else 0
+    today_mode = rotation[next_idx]
+
+    print(f"[附文] 今日模式: {today_mode}（上期: {last}）")
+
+    sub_content = ""
+    sub_title = "附文"
+
+    if today_mode == "毛选":
+        mao_essay = pick_mao_essay(essays_path)
+        if mao_essay:
+            sub_content = writer.chat(
+                system_prompt=MAO_ESSAY_SYSTEM,
+                user_prompt=MAO_ESSAY_USER.format(
+                    title=mao_essay["title"],
+                    volume=mao_essay["volume"],
+                    theme=mao_essay["theme"],
+                ),
+                temperature=0.8,
+                max_tokens=8192,
+            )
+            sub_title = "翻毛选"
+        else:
+            today_mode = "哲学"
+
+    if today_mode == "哲学":
+        philosophy = pick_philosophy(data_dir)
+        if philosophy:
+            sub_content = writer.chat(
+                system_prompt=PHILOSOPHY_SYSTEM,
+                user_prompt=PHILOSOPHY_USER.format(
+                    name=philosophy["name"],
+                    origin=philosophy["origin"],
+                    hint=philosophy["hint"],
+                ),
+                temperature=0.85,
+                max_tokens=8192,
+            )
+            sub_title = "每日一哲"
+        else:
+            print("❌ 哲学库为空")
+            sys.exit(1)
+
+    if today_mode == "热点":
+        sub_content = writer.chat(
+            system_prompt=COLUMN_SYSTEM,
+            user_prompt=COLUMN_USER,
+            temperature=0.85,
+            max_tokens=8192,
+        )
+        sub_title = "热点杂谈"
+
+    if not sub_content:
         print("❌ 附文生成失败")
         sys.exit(1)
 
-    mao_title = "翻毛选"
-    for line in mao_content.split("\n"):
+    for line in sub_content.split("\n"):
         stripped = line.strip()
         if stripped.startswith("# "):
-            mao_title = stripped[2:].strip()
+            sub_title = stripped[2:].strip()
             break
 
-    print(f"[附文] 标题: {mao_title}")
-    print(f"[附文] 长度: {len(mao_content)} 字")
+    print(f"[附文] 标题: {sub_title}")
+    print(f"[附文] 长度: {len(sub_content)} 字")
+
+    # 保存轮替状态
+    cycle_data["last"] = today_mode
+    with open(cycle_path, "w", encoding="utf-8") as f:
+        json.dump(cycle_data, f, ensure_ascii=False)
 
     # ④ 配图
     print("\n【步骤4/4】配图并推送...")
@@ -299,22 +386,22 @@ def main():
     pexels_key = config.get("pexels", {}).get("api_key", "")
 
     main_images = []
-    mao_images = []
+    sub_images = []
 
     if unsplash_key:
         fetcher = ImageFetcher(unsplash_key)
         main_images = fetcher.fetch_for_article(main_content, count=5)
-        mao_images = fetcher.fetch_for_article(mao_content, count=3)
+        sub_images = fetcher.fetch_for_article(sub_content, count=3)
 
     # 备用图源：Unsplash 没拿到图就用 Pexels
-    if (not main_images or not mao_images) and pexels_key:
+    if (not main_images or not sub_images) and pexels_key:
         print("[图片] Unsplash 图片不足，启用 Pexels 备用图源...")
         pexels_images_dir = data_dir  # dummy, we create a new fetcher
         pexels_fetcher = ImageFetcher(pexels_key, source="pexels")
         if not main_images:
             main_images = pexels_fetcher.fetch_for_article(main_content, count=5)
-        if not mao_images:
-            mao_images = pexels_fetcher.fetch_for_article(mao_content, count=3)
+        if not sub_images:
+            sub_images = pexels_fetcher.fetch_for_article(sub_content, count=3)
 
     if not unsplash_key and not pexels_key:
         print("[图片] 未配置任何图源 API Key，跳过配图")
@@ -326,21 +413,20 @@ def main():
         "images": main_images,
         "date": today_str,
     }
-    mao_article = {
-        "title": mao_title,
-        "content": mao_content,
-        "images": mao_images,
+    sub_article = {
+        "title": sub_title,
+        "content": sub_content,
+        "images": sub_images,
         "date": today_str,
-        "source_essay": mao_essay["title"],
     }
 
     notifier = Notifier(config)
-    notifier.notify(main_article, mao_article)
+    notifier.notify(main_article, sub_article)
 
     # ⑥ 保存历史存档
-    full_text = f"# {main_title}\n\n{main_content}\n\n---\n\n# {mao_title}\n\n{mao_content}"
+    full_text = f"# {main_title}\n\n{main_content}\n\n---\n\n# {sub_title}\n\n{sub_content}"
     save_history_file(history_dir, f"{today_file}_主文.md", main_content)
-    save_history_file(history_dir, f"{today_file}_附文.md", mao_content)
+    save_history_file(history_dir, f"{today_file}_附文.md", sub_content)
     save_history_file(history_dir, f"{today_file}_全文.md", full_text)
     print(f"[存档] 已保存至 {history_dir}/")
 
@@ -349,7 +435,7 @@ def main():
     print(f"\n{'='*50}")
     print(f"  ✅ 任务完成！荐书+附文已推送")
     print(f"  主文：《{main_title}》")
-    print(f"  附文：《{mao_title}》")
+    print(f"  附文：《{sub_title}》")
     print(f"  文风：{style}")
     print(f"{'='*50}\n")
 
